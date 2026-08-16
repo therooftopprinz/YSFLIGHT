@@ -23,7 +23,11 @@ elseif(APPLE)
 elseif(ANDROID)
 	set(TARGET_NAME ysflight${BITNESS}_gl2)
 elseif(UNIX)
-	set(TARGET_NAME ysflight${BITNESS}_gl1 ysflight${BITNESS}_gl2)
+	if(YSFLIGHT_NATIVE_GLES2)
+		set(TARGET_NAME ysflight${BITNESS}_gl2)
+	else()
+		set(TARGET_NAME ysflight${BITNESS}_gl1 ysflight${BITNESS}_gl2)
+	endif()
 else()
 	message(FATAL_ERROR "Unsupported platform.")
 endif()
@@ -295,7 +299,9 @@ endif()
 
 if(NOT ANDROID)
 	add_executable(ysflight${BITNESS}_gl2 ${EXE_TYPE} fsmain.cpp ${SRCS})
-	add_executable(ysflight${BITNESS}_gl1 ${EXE_TYPE} fsmain.cpp ${SRCS})
+	if(NOT YSFLIGHT_NATIVE_GLES2)
+		add_executable(ysflight${BITNESS}_gl1 ${EXE_TYPE} fsmain.cpp ${SRCS})
+	endif()
 else()
 	add_library(ysflight${BITNESS}_gl2 ${EXE_TYPE} fsmain.cpp ${SRCS})
 endif()
@@ -575,19 +581,21 @@ elseif(ANDROID)
 		fslazywindow
 	)
 elseif(UNIX)
-	target_link_libraries(ysflight${BITNESS}_gl1 
-		ysgl
-		yssystemfont
-		fsguilib_gl1
-		ysflight_platform_linux 
-		ysscenery_dnm_gl1
-		ystexturemanager_gl
-		${OS_LIBRARIES}
-		ysjoystick
-		ysjoycalibdlg_gl1
-		ysflight_graphics_gl1 
-		fslazywindow
-	)
+	if(NOT YSFLIGHT_NATIVE_GLES2)
+		target_link_libraries(ysflight${BITNESS}_gl1
+			ysgl
+			yssystemfont
+			fsguilib_gl1
+			ysflight_platform_linux
+			ysscenery_dnm_gl1
+			ystexturemanager_gl
+			${OS_LIBRARIES}
+			ysjoystick
+			ysjoycalibdlg_gl1
+			ysflight_graphics_gl1
+			fslazywindow
+		)
+	endif()
 	target_link_libraries(ysflight${BITNESS}_gl2 
 		ysgl
 		yssystemfont
@@ -603,7 +611,11 @@ elseif(UNIX)
 	)
 
 	set(DLL_PROJS sndYsflight${BITNESS} sndYsflight${BITNESS}-pulse voiceYsflight${BITNESS})
-	set(NEED_DLL_TARGETS ysflight${BITNESS}_gl1 ysflight${BITNESS}_gl2)
+	if(YSFLIGHT_NATIVE_GLES2)
+		set(NEED_DLL_TARGETS ysflight${BITNESS}_gl2)
+	else()
+		set(NEED_DLL_TARGETS ysflight${BITNESS}_gl1 ysflight${BITNESS}_gl2)
+	endif()
 endif()
 
 

@@ -1619,7 +1619,10 @@ FsWeaponHolder::~FsWeaponHolder()
 	{
 		delete toPlay;
 	}
-	killCredit->DeleteList();
+	if(killCredit!=NULL)   // Stays NULL when the simulation ends without a kill.
+	{
+		killCredit->DeleteList();
+	}
 }
 
 YSRESULT FsWeaponHolder::LoadMissilePattern(void)
@@ -2085,7 +2088,7 @@ YSRESULT FsWeaponHolder::Save(FILE *fp,FsSimulation *sim,int wpnPosPrecision,int
 			}
 		}
 
-		if(killCredit->GetNumObject()>0)
+		if(killCredit!=NULL && killCredit->GetNumObject()>0)
 		{
 			YsList <FsKillCredit> *kcSeeker;
 			fprintf(fp,"KILLCREDIT 1 %d\n",killCredit->GetNumObject());  // 1 : Version 1
@@ -2160,8 +2163,11 @@ YSRESULT FsWeaponHolder::Load(FILE *fp,FsSimulation *sim)
 		delete toPlay;
 		toPlay=NULL;
 	}
-	killCredit->DeleteList();
-	killCredit=NULL;
+	if(killCredit!=NULL)
+	{
+		killCredit->DeleteList();
+		killCredit=NULL;
+	}
 
 	toPlay=new FsRecord <FsWeaponRecord>;
 

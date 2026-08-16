@@ -48,7 +48,7 @@ add_library(${TARGET_NAME} ${SRCS})
 target_include_directories(${TARGET_NAME} PUBLIC ${CMAKE_CURRENT_SOURCE_DIR} ${ADDITIONAL_INCLUDE_DIR1} ${ADDITIONAL_INCLUDE_DIR2})
 target_link_libraries(${TARGET_NAME} ${LIB_DEPENDENCY})
 
-if(NOT ANDROID)
+if(NOT ANDROID AND NOT YSFLIGHT_NATIVE_GLES2)
 	add_library(ysjoycalibdlg_gl1 fsjoycalibdlggl.cpp fsjoycalibdlg.cpp)
 	target_include_directories(ysjoycalibdlg_gl1 PUBLIC ${CMAKE_CURRENT_SOURCE_DIR} ${ADDITIONAL_INCLUDE_DIR1} ${ADDITIONAL_INCLUDE_DIR2})
 	target_link_libraries(ysjoycalibdlg_gl1 ysjoystick)

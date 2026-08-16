@@ -10,6 +10,7 @@
 #include <ysglcpp.h>
 #include <ysglslcpp.h>
 #include <ysglbuffermanager_gl2.h>
+#include <ysglstatecache.h>
 
 #include <fsdef.h>
 

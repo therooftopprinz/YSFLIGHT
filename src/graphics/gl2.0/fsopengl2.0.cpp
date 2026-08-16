@@ -20,6 +20,7 @@
 #include "fsopengl2.0.h"
 
 #include <time.h>
+#include <stdlib.h>
 
 
 #ifdef _WIN32
@@ -283,7 +284,18 @@ void FsInitializeOpenGL(void)
 	YsGLSLCreateSharedRenderer();
 	YsGLSLSetShared3DRendererAlphaCutOff(0.02f);
 
-	YsGLSLSetPerPixRendering(YSTRUE); 
+	// Per-pixel shading runs the whole lighting model for every fragment.  On the Mali-G31
+	// in the R36S that makes the renderer fragment-bound long before it runs out of draw
+	// calls, so the GLES2 build shades per vertex instead.  YSGL_PERPIX overrides it.
+	YSBOOL perPix=YSTRUE;
+#ifdef YS_GL_ES2
+	perPix=YSFALSE;
+#endif
+	if(const char *env=getenv("YSGL_PERPIX"))
+	{
+		perPix=(0!=atoi(env) ? YSTRUE : YSFALSE);
+	}
+	YsGLSLSetPerPixRendering(perPix);
 	YsGLSLSetShared3DRendererSpecularExponent(600.0f);
 
 	YsGLSLCreateSharedBitmapFontRenderer();
@@ -471,7 +483,7 @@ void FsFogOn(const YsColor &col,const double &visibility)
 	// f  0:Completely fogged out   1:Clear
 	// f=e^(-d*d)
 	// d  0:Clear      Infinity: Completely fogged out
-	// 99% fogged out means:  e^(-d*d)=0.01  WhatÅfs d?
+	// 99% fogged out means:  e^(-d*d)=0.01  Whatùfs d?
 	// -d*d=loge(0.01)
 	// -d*d= -4.60517
 	// d=2.146

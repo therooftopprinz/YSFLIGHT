@@ -82,6 +82,99 @@ build-sdl/main/ysflight64_gl1
 
 Runtime data (aircraft, scenery, default configs) is staged under `build-sdl/main/` next to the binary.
 
+### Native GLES2 build (experimental)
+
+The GL2 renderer can be built directly against EGL/GLES2, without gl4es:
+
+```sh
+cmake -S src -B build-gles2 \
+  -DYSFLIGHT_NATIVE_GLES2=ON \
+  -DCMAKE_BUILD_TYPE=Release
+cmake --build build-gles2 --target ysflight64_gl2 --parallel
+```
+
+This mode enables the SDL backend automatically, requests an OpenGL ES 2.0
+context, excludes the desktop GL1 targets, and produces
+`build-gles2/main/ysflight64_gl2`. It requires Linux SDL2, EGL, and GLES2
+development libraries. Do not put gl4es on `LD_LIBRARY_PATH` when launching
+this binary.
+
+In this mode the GLSL renderers route their program binds, buffer binds and
+vertex attribute array enables through a shadow state cache
+(`ysgl/src/ysglstatecache.[ch]`), which drops redundant calls and defers
+attribute enables until a draw needs them. Profiling on the R36S showed the
+Mali driver consuming more than half of the frame budget servicing that
+traffic; the cache cuts per-frame attribute enables by roughly 97% and is
+worth 1.1x-1.5x frames per second depending on the scene. If a new renderer
+starts calling those entry points, include the header so it goes through the
+cache too, otherwise the shadow copy will drift from the driver's state.
+
+#### Fragment cost on the Mali-G31
+
+With the state cache in place the GLES2 renderer was still three times slower
+than GL1 through gl4es, and measuring utilization on a frozen scene explained
+why: GLES2 sat at 86% GPU with the process only 24% busy, while GL1 sat at 14%
+GPU and 91% CPU. The renderer was fragment-bound, not draw-call-bound, so
+batching draws bought nothing. Three changes to the shading path fixed that:
+
+- `YsCalculateStandardLighting` skips lights whose `lightEnabled` is zero.
+  YSFlight only ever enables light 0, so the loop was paying for seven extra
+  `normalize`/`pow` pairs per fragment.
+- The GLES2 build shades per vertex instead of per pixel
+  (`YsGLSLSetPerPixRendering`). Set `YSGL_PERPIX=1` to compare against the
+  per-pixel path.
+- Untextured draws no longer sample the texture, and fog math is skipped when
+  `fogDensity` is zero. Both were previously computed and then multiplied out.
+
+On the frozen benchmark scene that took the R36S from 3.9 to about 13.5 frames
+per second, roughly 1.4x faster than the GL1/gl4es path it replaces.
+
+#### Opaque geometry without `discard`
+
+Every shared 3D fragment shader ended with an alpha cutoff that always called
+`discard`.  On Mali that forces late-Z and disables early depth rejection, which
+hurts once opaque scenery starts overdrawing itself.  The GLES2 build now keeps
+a second per-vertex shaded program compiled with `YSGLSL_OPAQUE`, which omits
+the cutoff entirely, and routes fully opaque scenery through it:
+
+- cached 2D maps without a user texture (vertex alpha is always 1, and the
+  optional common ground tile is an opaque grayscale image)
+- elevation-grid mesh and side walls when the grid has no own texture
+- the shell renderer's `solidShadedPosNomColHd` buffer, which is already
+  separated from transparent aircraft and ground-object polygons
+
+Alpha-sensitive draws (user textures, particles, flashes, runway lights, clouds)
+stay on the original shaders.  That change alone raised the frozen-scene rate
+from about 14.2 to 16.7 fps and live free-flight from 10.5 to 12.2 fps.
+Routing solid shaded shell geometry through the same program added another
+7% in the frozen scene and 9% in live flight.  The separate solid-unshaded
+buffer was tested and reverted: it did not improve the frozen scene and made
+live flight about 6% slower.  Set `YSGL_OPAQUE_SHELL=0` to disable only the
+successful shaded-shell path.
+
+Because the program is shared, its texture state has to be managed like any
+other renderer's.  The scenery sets it to tile the common ground texture, so it
+is now reset alongside `Flat`/`MonoColorShaded`/`VariColorShaded`, and the shell
+path sets `YSGLSL_TEX_TYPE_NONE` before drawing its untextured buffer.  Without
+that, aircraft, ground objects and the joystick models sampled the ground tile
+with no texture bound and came out solid black.
+
+Disabling `GL_BLEND` around those opaque draws looked attractive on paper and
+measured no better: interleaved blend enable/disable broke up the tiled render
+pass and erased the win.  The `YSGL_OPAQUE_BLEND=1` switch remains for
+profiling, but defaults off.  `GL_STENCIL_TEST` is still required to mask the
+fallback ground mesh behind the scenery map, so it stays enabled.  Set
+`YSGL_OPAQUE_FAST=0` to force the old discard-bearing shaders.
+
+#### Benchmarking on device
+
+`tools/device_bench*.sh` run a fixed scene unattended. They drive the game with
+`-script` (`tools/bench_static.txt`), which dismisses the startup dialogs and
+the "center the joystick" prompt — that prompt waits for a button press and
+will otherwise hang any headless run — and then issues
+`BTNFUNC:PAUSESIMULATION` so every binary renders the identical frozen frame.
+Free-running gameplay numbers come from `tools/bench_freeflight.txt`.
+
 ---
 
 ## Deploy (R36S / PortMaster)
@@ -89,37 +182,42 @@ Runtime data (aircraft, scenery, default configs) is staged under `build-sdl/mai
 Target layout used by this port:
 
 ```text
-/roms/ports/YSFlight.sh          # PortMaster launcher
+/roms/ports/YSFlight.sh          # PortMaster launcher (native GLES2)
 /roms/ports/ysflight/            # game directory ($GAMEDIR)
-  ysflight64_gl1
+  ysflight64_gles2               # what the launcher runs
+  ysflight64_gl1                 # gl4es build, kept for comparison only
   config/ctlassign.cfg           # R36S mapping (not stock)
   config/flight.cfg              # kept across deploys; FPS counter optional
   language/en.uitxt              # menu strings must match the binary
-  gl4es/                         # gl4es libGL for Mali/EGL
+  gl4es/                         # gl4es libGL, only used by ysflight64_gl1
   … aircraft, scenery, etc.
 ```
 
+The port ships a single entry running the native GLES2 binary, which is about
+1.3x faster in flight than the GL1/gl4es build it replaced. The gl4es binary
+and libraries stay on the card so the two paths can still be compared, but
+nothing in the menu launches them.
+
 ### 1. Install / refresh the port tree once
 
-Copy a full `build-sdl/main/` runtime (or an existing port package) to `/roms/ports/ysflight/`, plus:
+Copy a full runtime (or an existing port package) to `/roms/ports/ysflight/`, plus:
 
 - Launcher script as `/roms/ports/YSFlight.sh` (PortMaster calls this; see notes below)
-- gl4es libraries under `$GAMEDIR/gl4es/`
 
 ### 2. Update the binary and mapping after a rebuild
 
 From a machine that can SSH to the handheld (replace host as needed):
 
 ```sh
-HOST=ark@192.168.253.119
+HOST=ark@192.168.253.10
 GAMEDIR=/roms/ports/ysflight
-BIN=build-sdl/main/ysflight64_gl1
+BIN=build-gles2/main/ysflight64_gl2
 
-ssh "$HOST" "pkill -9 ysflight64_gl1 2>/dev/null; mkdir -p $GAMEDIR/config" || true
-scp "$BIN" "$HOST:$GAMEDIR/ysflight64_gl1"
+ssh "$HOST" "pkill -9 ysflight64_gles2 2>/dev/null; mkdir -p $GAMEDIR/config" || true
+scp "$BIN" "$HOST:$GAMEDIR/ysflight64_gles2"
 scp path/to/r36s-ctlassign.cfg "$HOST:$GAMEDIR/config/ctlassign.cfg"
-scp build-sdl/main/language/en.uitxt "$HOST:$GAMEDIR/language/en.uitxt"
-ssh "$HOST" "chmod +x $GAMEDIR/ysflight64_gl1"
+scp build-gles2/main/language/en.uitxt "$HOST:$GAMEDIR/language/en.uitxt"
+ssh "$HOST" "chmod +x $GAMEDIR/ysflight64_gles2"
 ```
 
 **Critical:** always pass `-configdir` to the binary so it reads `$GAMEDIR/config`. Without it, YSFLIGHT stores config under `$HOME/Documents/YSFLIGHT.COM/YSFLIGHT/config` and falls back to the built-in stick assignment (absolute throttle on right X).
@@ -127,11 +225,19 @@ ssh "$HOST" "chmod +x $GAMEDIR/ysflight64_gl1"
 Launcher essentials:
 
 ```sh
-export LIBGL_ES=2 LIBGL_GL=21 LIBGL_FB=4
-export LD_LIBRARY_PATH="$GAMEDIR/gl4es:$LD_LIBRARY_PATH"
-unset DISPLAY SDL_VIDEODRIVER
-./ysflight64_gl1 -configdir "$GAMEDIR/config"
+export SDL_VIDEODRIVER=kmsdrm
+export SDL_VIDEO_GL_DRIVER=libGLESv2.so
+export SDL_VIDEO_EGL_DRIVER=libEGL.so
+unset LIBGL_ES LIBGL_GL LIBGL_FB DISPLAY
+./ysflight64_gles2 -configdir "$GAMEDIR/config"
 ```
+
+gl4es must stay off `LD_LIBRARY_PATH` here: its `libGL.so.1` would shadow the
+Mali driver. The launcher switches the CPU governor to `performance` while the
+game runs and restores the previous one on exit.
+
+Drop a file named `PERPIXEL` in `$GAMEDIR` to force per-pixel shading, which
+looks slightly better and roughly halves the frame rate.
 
 Optional quick start: put a one-line `QUICKFLIGHT` file in `$GAMEDIR` with `Airplane Field StartPosition`, then launch with `-freeflight` as well.
 
@@ -139,7 +245,7 @@ Optional quick start: put a one-line `QUICKFLIGHT` file in `$GAMEDIR` with `Airp
 
 - `ctlassign.cfg` must **not** contain `AXS 0 2 THROTTLE` or `TRG` lines (those mark the stock upstream mapping).
 - R36S mapping uses `AXS 0 2 RUDDER` and leaves axis 3 unassigned so the SDL backend can drive incremental throttle while R1 is held.
-- Confirm md5 of `ysflight64_gl1` matches the local build if you are iterating quickly.
+- Confirm md5 of `ysflight64_gles2` matches the local build if you are iterating quickly.
 
 ### Controls (short)
 

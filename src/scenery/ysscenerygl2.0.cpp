@@ -5,10 +5,39 @@
 //   cl /c ysscenerygl2.0.cpp /I ..\..\ysgl\src /I ..\..\imported\include
 
 #include "ysgl.h"
+#include "ysglstatecache.h"
 
 #include "ysscenery.h"
 
 #include <ystexturemanager_gl.h>
+
+
+#ifdef YS_GL_ES2
+static YSBOOL YsGLUseOpaqueSceneryFastPath(void)
+{
+	static int enabled=-1;
+	if(0>enabled)
+	{
+		const char *env=getenv("YSGL_OPAQUE_FAST");
+		enabled=(NULL==env || 0!=atoi(env));
+	}
+	return (0!=enabled ? YSTRUE : YSFALSE);
+}
+
+static YSBOOL YsGLDisableBlendForOpaqueScenery(void)
+{
+	static int enabled=-1;
+	if(0>enabled)
+	{
+		const char *env=getenv("YSGL_OPAQUE_BLEND");
+		/* Toggling blend around interleaved scenery draws breaks up Mali's
+		   tiled render pass and measured slower than leaving blend enabled.
+		   Keep this switch for profiling, but default it off. */
+		enabled=(NULL!=env && 0!=atoi(env));
+	}
+	return (0!=enabled ? YSTRUE : YSFALSE);
+}
+#endif
 
 
 namespace SetUpMatrix
@@ -30,6 +59,12 @@ namespace SetUpMatrix
 		YsGLSLUse3DRenderer(YsGLSLSharedMonoColorShaded3DRenderer());
 		YsGLSLSet3DRendererModelViewdv(YsGLSLSharedMonoColorShaded3DRenderer(),glMat);
 		YsGLSLEndUse3DRenderer(YsGLSLSharedMonoColorShaded3DRenderer());
+
+#ifdef YS_GL_ES2
+		YsGLSLUse3DRenderer(YsGLSLSharedVariColorPerVtxShading3DRendererOpaque());
+		YsGLSLSet3DRendererModelViewdv(YsGLSLSharedVariColorPerVtxShading3DRendererOpaque(),glMat);
+		YsGLSLEndUse3DRenderer(YsGLSLSharedVariColorPerVtxShading3DRendererOpaque());
+#endif
 
 		YsGLSLUse3DRenderer(YsGLSLSharedVariColorShadedWithTexCoord3DRenderer());
 		YsGLSLSet3DRendererModelViewdv(YsGLSLSharedVariColorShadedWithTexCoord3DRenderer(),glMat);
@@ -546,12 +581,110 @@ public:
 		Ys2DDrawingElement::OBJTYPE objType;
 		YsColor color;
 		YSBOOL specular;
+		YSBOOL variColor;
 		GLint textureId;
 		GLint filterType;
 
 		Primitive()
 		{
+			specular=YSFALSE;
+			variColor=YSFALSE;
 			textureId=0;
+			filterType=GL_LINEAR;
+		}
+
+		inline void AppendVertexFrom(const Primitive &from,YSSIZE_T idx)
+		{
+			vtxArray.Append(3,from.vtxArray.GetArray()+idx*3);
+			if(from.nomArray.GetN()/3>idx)
+			{
+				nomArray.Append(3,from.nomArray.GetArray()+idx*3);
+			}
+			if(from.texCoordArray.GetN()/2>idx)
+			{
+				texCoordArray.Append(2,from.texCoordArray.GetArray()+idx*2);
+			}
+			if(from.colArray.GetN()/4>idx)
+			{
+				colArray.Append(4,from.colArray.GetArray()+idx*4);
+			}
+		}
+
+		inline void ConvertLineStripToLines(void)
+		{
+			Primitive converted;
+			converted.objType=Ys2DDrawingElement::LINES;
+			for(YSSIZE_T i=0; i+1<vtxArray.GetN()/3; ++i)
+			{
+				converted.AppendVertexFrom(*this,i);
+				converted.AppendVertexFrom(*this,i+1);
+			}
+			vtxArray.MoveFrom(converted.vtxArray);
+			nomArray.MoveFrom(converted.nomArray);
+			texCoordArray.MoveFrom(converted.texCoordArray);
+			colArray.MoveFrom(converted.colArray);
+			objType=Ys2DDrawingElement::LINES;
+		}
+
+		inline void ConvertTriangleStripToTriangles(void)
+		{
+			Primitive converted;
+			converted.objType=Ys2DDrawingElement::TRIANGLES;
+			for(YSSIZE_T i=0; i+2<vtxArray.GetN()/3; ++i)
+			{
+				if(0==(i&1))
+				{
+					converted.AppendVertexFrom(*this,i);
+					converted.AppendVertexFrom(*this,i+1);
+				}
+				else
+				{
+					converted.AppendVertexFrom(*this,i+1);
+					converted.AppendVertexFrom(*this,i);
+				}
+				converted.AppendVertexFrom(*this,i+2);
+			}
+			vtxArray.MoveFrom(converted.vtxArray);
+			nomArray.MoveFrom(converted.nomArray);
+			texCoordArray.MoveFrom(converted.texCoordArray);
+			colArray.MoveFrom(converted.colArray);
+			objType=Ys2DDrawingElement::TRIANGLES;
+		}
+
+		inline void MakeVariColor(void)
+		{
+			const YSSIZE_T nVtx=vtxArray.GetN()/3;
+			if(colArray.GetN()!=nVtx*4)
+			{
+				colArray.Clear();
+				for(YSSIZE_T i=0; i<nVtx; ++i)
+				{
+					AddColor(color);
+				}
+			}
+			variColor=YSTRUE;
+		}
+
+		inline YSBOOL CanAppend(const Primitive &from) const
+		{
+			if(objType==from.objType &&
+			   specular==from.specular &&
+			   textureId==from.textureId &&
+			   filterType==from.filterType &&
+			   (0<texCoordArray.GetN())==(0<from.texCoordArray.GetN()) &&
+			   YSTRUE==variColor && YSTRUE==from.variColor)
+			{
+				return YSTRUE;
+			}
+			return YSFALSE;
+		}
+
+		inline void Append(const Primitive &from)
+		{
+			vtxArray.Append(from.vtxArray);
+			texCoordArray.Append(from.texCoordArray);
+			nomArray.Append(from.nomArray);
+			colArray.Append(from.colArray);
 		}
 	};
 
@@ -919,6 +1052,44 @@ void Ys2DDrawing::MakeCache(const double &plgColorScale,const double &linColorSc
 		}
 	}
 
+	/* Convert strip primitives to independent lines/triangles, attach the
+	   formerly-uniform color to each vertex, and concatenate adjacent
+	   primitives that need identical GL state.  Keeping this pass adjacent
+	   preserves the file's draw order (important for coplanar runway
+	   markings), while still collapsing long runs of differently-colored
+	   scenery into one draw. */
+	YsSegmentedArray <Ys2DDrawingGraphicCache::Primitive,4> batched;
+	for(auto &src : graphicCache->primitiveArray)
+	{
+		switch(src.objType)
+		{
+		case Ys2DDrawingElement::LINESEGMENTS:
+			src.ConvertLineStripToLines();
+			break;
+		case Ys2DDrawingElement::QUADSTRIP:
+		case Ys2DDrawingElement::GRADATIONQUADSTRIP:
+			src.ConvertTriangleStripToTriangles();
+			break;
+		default:
+			break;
+		}
+
+		if(Ys2DDrawingElement::LINES==src.objType ||
+		   Ys2DDrawingElement::TRIANGLES==src.objType)
+		{
+			src.MakeVariColor();
+			if(0<batched.GetN() && YSTRUE==batched.Last().CanAppend(src))
+			{
+				batched.Last().Append(src);
+				continue;
+			}
+		}
+
+		batched.Increment();
+		batched.Last()=src;
+	}
+	graphicCache->primitiveArray.MoveFrom(batched);
+
 	for(auto &prim : graphicCache->primitiveArray)
 	{
 		prim.MakeVbo();
@@ -964,24 +1135,26 @@ void Ys2DDrawing::Draw(
 	if(YSTRUE==IsCached())
 	{
 		YsGLSL3DRenderer *currentRenderer=NULL;
+		YSBOOL blendDisabledForOpaque=YSFALSE;
 
 		for(YSSIZE_T i=0; i<graphicCache->primitiveArray.GetN(); ++i)
 		{
 			YsGLSL3DRenderer *renderer=NULL;
 			GLenum glPrimitive=GL_POINTS;
+			const Ys2DDrawingGraphicCache::Primitive &primitive=graphicCache->primitiveArray[i];
 
 			if(YSTRUE!=drawPset && 
-			   (graphicCache->primitiveArray[i].objType==Ys2DDrawingElement::POINTS || 
-			    graphicCache->primitiveArray[i].objType==Ys2DDrawingElement::APPROACHLIGHT))
+			   (primitive.objType==Ys2DDrawingElement::POINTS ||
+			    primitive.objType==Ys2DDrawingElement::APPROACHLIGHT))
 			{
 				continue;
 			}
 
-			YSBOOL useOwnTexture=(0<graphicCache->primitiveArray[i].textureId ? YSTRUE : YSFALSE);
-			YSBOOL variColor=YSFALSE;
+			YSBOOL useOwnTexture=(0<primitive.textureId ? YSTRUE : YSFALSE);
+			YSBOOL variColor=primitive.variColor;
 			int rendererType=YSGLSL_RENDERER_TYPE_NONE;
 
-			switch(graphicCache->primitiveArray[i].objType)
+			switch(primitive.objType)
 			{
 			case Ys2DDrawingElement::POINTS:
 			case Ys2DDrawingElement::APPROACHLIGHT:
@@ -999,9 +1172,10 @@ void Ys2DDrawing::Draw(
 				break;
 
 			case Ys2DDrawingElement::LINES:
-				renderer=YsGLSLSharedMonoColorShaded3DRenderer();
+				renderer=(YSTRUE==variColor ?
+				    YsGLSLSharedVariColorShaded3DRenderer() :
+				    YsGLSLSharedMonoColorShaded3DRenderer());
 				glPrimitive=GL_LINES;
-				variColor=YSFALSE;
 				rendererType=YSGLSL_RENDERER_TYPE_SHADED3D;
 				break;
 
@@ -1010,14 +1184,16 @@ void Ys2DDrawing::Draw(
 			case Ys2DDrawingElement::TRIANGLES:
 				if(YSTRUE!=useOwnTexture)
 				{
-					renderer=YsGLSLSharedMonoColorShaded3DRenderer();
-					variColor=YSFALSE;
+					renderer=(YSTRUE==variColor ?
+					    YsGLSLSharedVariColorShaded3DRenderer() :
+					    YsGLSLSharedMonoColorShaded3DRenderer());
 					rendererType=YSGLSL_RENDERER_TYPE_SHADED3D;
 				}
 				else
 				{
-					renderer=YsGLSLSharedMonoColorShadedWithTexCoord3DRenderer();
-					variColor=YSFALSE;
+					renderer=(YSTRUE==variColor ?
+					    YsGLSLSharedVariColorShadedWithTexCoord3DRenderer() :
+					    YsGLSLSharedMonoColorShadedWithTexCoord3DRenderer());
 					rendererType=YSGLSL_RENDERER_TYPE_SHADED3D;
 				}
 				glPrimitive=GL_TRIANGLES;
@@ -1047,6 +1223,36 @@ void Ys2DDrawing::Draw(
 				break;
 			}
 
+#ifdef YS_GL_ES2
+			/* Cached scenery without its own texture is fully opaque: generated
+			   vertex colors have alpha 1 and the optional common ground tile is
+			   an opaque grayscale image.  Use a shader with no discard so Mali
+			   can perform early depth rejection.  User textures stay on the
+			   alpha-cutoff renderer. */
+			if(YSGLSL_RENDERER_TYPE_SHADED3D==rendererType &&
+			   YSTRUE!=useOwnTexture &&
+			   YSTRUE==YsGLUseOpaqueSceneryFastPath())
+			{
+				renderer=YsGLSLSharedVariColorPerVtxShading3DRendererOpaque();
+				variColor=YSTRUE;
+			}
+
+			if(renderer==YsGLSLSharedVariColorPerVtxShading3DRendererOpaque() &&
+			   YSTRUE==YsGLDisableBlendForOpaqueScenery())
+			{
+				if(YSTRUE!=blendDisabledForOpaque)
+				{
+					glDisable(GL_BLEND);
+					blendDisabledForOpaque=YSTRUE;
+				}
+			}
+			else if(YSTRUE==blendDisabledForOpaque)
+			{
+				glEnable(GL_BLEND);
+				blendDisabledForOpaque=YSFALSE;
+			}
+#endif
+
 			if(NULL!=renderer)
 			{
 				if(currentRenderer!=renderer)
@@ -1055,9 +1261,6 @@ void Ys2DDrawing::Draw(
 					YsGLSLUse3DRenderer(renderer);
 					currentRenderer=renderer;
 				}
-
-				const Ys2DDrawingGraphicCache::Primitive &primitive=graphicCache->primitiveArray[i];
-
 
 				GLfloat savedSpecular[3];
 				YsGLSLGet3DRendererSpecularColor(savedSpecular,renderer);
@@ -1220,6 +1423,10 @@ void Ys2DDrawing::Draw(
 			}
 		}
 		YsGLSLEndUse3DRenderer(currentRenderer);
+		if(YSTRUE==blendDisabledForOpaque)
+		{
+			glEnable(GL_BLEND);
+		}
 
 		if(drawBbx==YSTRUE)
 		{
@@ -1725,6 +1932,12 @@ void YsElevationGrid::DrawFastFillOnly(const double &plgColorScale)
 		else
 		{
 			auto renderer=YsGLSLSharedVariColorShaded3DRenderer();
+#ifdef YS_GL_ES2
+			if(YSTRUE==YsGLUseOpaqueSceneryFastPath())
+			{
+				renderer=YsGLSLSharedVariColorPerVtxShading3DRendererOpaque();
+			}
+#endif
 			YsGLSLUse3DRenderer(renderer);
 
 			GLfloat savedSpecular[3];
@@ -1741,6 +1954,12 @@ void YsElevationGrid::DrawFastFillOnly(const double &plgColorScale)
 		}
 		{
 			auto renderer=YsGLSLSharedVariColorShaded3DRenderer();
+#ifdef YS_GL_ES2
+			if(YSTRUE==YsGLUseOpaqueSceneryFastPath())
+			{
+				renderer=YsGLSLSharedVariColorPerVtxShading3DRendererOpaque();
+			}
+#endif
 			YsGLSLUse3DRenderer(renderer);
 
 			GLfloat savedSpecular[3];
@@ -2705,6 +2924,12 @@ void YsScenery::DrawMap(YSBOOL wire,YSBOOL fill,YSBOOL drawBbx)
 		YsGLSLSharedFlat3DRenderer(),
 		YsGLSLSharedMonoColorShaded3DRenderer(),
 		YsGLSLSharedVariColorShaded3DRenderer(),
+#ifdef YS_GL_ES2
+		// The opaque renderer draws untextured maps, so it has to be set up and,
+		// more importantly, reset with the rest.  Anything else that shares it
+		// would otherwise inherit the ground-texture tiling left behind here.
+		YsGLSLSharedVariColorPerVtxShading3DRendererOpaque(),
+#endif
 		NULL
 	};
 
@@ -2942,18 +3167,32 @@ void YsScenery::DrawVisual(
 			0.0f,  0.025f,0.0f,  0,
 			0.0f,  0.0f,  0.0f,  1
 		};
-		YsGLSLUse3DRenderer(YsGLSLSharedVariColorShaded3DRenderer());
-		if(nullptr!=commonTexManPtr && YSTRUE==commonTexManPtr->IsReady(commonGroundTexHd))
+		// DrawFastFillOnly picks the opaque renderer on GLES2, so both have to be
+		// given the ground tiling.
+		YsGLSL3DRenderer *evgRenderer[]=
 		{
-			YsGLSLSet3DRendererTextureType(YsGLSLSharedVariColorShaded3DRenderer(),YSGLSL_TEX_TYPE_TILING);
-		}
-		else
+			YsGLSLSharedVariColorShaded3DRenderer(),
+#ifdef YS_GL_ES2
+			YsGLSLSharedVariColorPerVtxShading3DRendererOpaque(),
+#endif
+			NULL
+		};
+
+		for(int i=0; NULL!=evgRenderer[i]; ++i)
 		{
-			YsGLSLSet3DRendererTextureType(YsGLSLSharedVariColorShaded3DRenderer(),YSGLSL_TEX_TYPE_NONE);
+			YsGLSLUse3DRenderer(evgRenderer[i]);
+			if(nullptr!=commonTexManPtr && YSTRUE==commonTexManPtr->IsReady(commonGroundTexHd))
+			{
+				YsGLSLSet3DRendererTextureType(evgRenderer[i],YSGLSL_TEX_TYPE_TILING);
+			}
+			else
+			{
+				YsGLSLSet3DRendererTextureType(evgRenderer[i],YSGLSL_TEX_TYPE_NONE);
+			}
+			YsGLSLSet3DRendererTextureIdentifier(evgRenderer[i],0); // 0 for GL_TEXTURE0 apparently
+			YsGLSLSet3DRendererUniformTextureTilingMatrixfv(evgRenderer[i],texTfm);
+			YsGLSLEndUse3DRenderer(evgRenderer[i]);
 		}
-		YsGLSLSet3DRendererTextureIdentifier(YsGLSLSharedVariColorShaded3DRenderer(),0); // 0 for GL_TEXTURE0 apparently
-		YsGLSLSet3DRendererUniformTextureTilingMatrixfv(YsGLSLSharedVariColorShaded3DRenderer(),texTfm);
-		YsGLSLEndUse3DRenderer(YsGLSLSharedVariColorShaded3DRenderer());
 
 		evg=NULL;
 		while((evg=evgList.FindNext(evg))!=NULL)
@@ -2965,9 +3204,12 @@ void YsScenery::DrawVisual(
 			}
 		}
 
-		YsGLSLUse3DRenderer(YsGLSLSharedVariColorShaded3DRenderer());
-		YsGLSLSet3DRendererTextureType(YsGLSLSharedVariColorShaded3DRenderer(),YSGLSL_TEX_TYPE_NONE);
-		YsGLSLEndUse3DRenderer(YsGLSLSharedVariColorShaded3DRenderer());
+		for(int i=0; NULL!=evgRenderer[i]; ++i)
+		{
+			YsGLSLUse3DRenderer(evgRenderer[i]);
+			YsGLSLSet3DRendererTextureType(evgRenderer[i],YSGLSL_TEX_TYPE_NONE);
+			YsGLSLEndUse3DRenderer(evgRenderer[i]);
+		}
 	}
 	glFrontFace(GL_CCW);
 
@@ -3008,6 +3250,12 @@ void YsScenery::DrawMapVisual
 		YsGLSLSharedFlat3DRenderer(),
 		YsGLSLSharedMonoColorShaded3DRenderer(),
 		YsGLSLSharedVariColorShaded3DRenderer(),
+#ifdef YS_GL_ES2
+		// The opaque renderer draws untextured maps, so it has to be set up and,
+		// more importantly, reset with the rest.  Anything else that shares it
+		// would otherwise inherit the ground-texture tiling left behind here.
+		YsGLSLSharedVariColorPerVtxShading3DRendererOpaque(),
+#endif
 		NULL
 	};
 
