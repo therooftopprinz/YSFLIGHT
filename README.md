@@ -7,7 +7,7 @@ This repository is a fork of [captainys/YSFLIGHT](https://github.com/captainys/Y
 
 Upstream introduction and history are unchanged: YSFLIGHT is a casual flight simulator by Soji Yamakawa. Please see the original project and [ysflight.com](http://www.ysflight.com) for the full story.
 
-**Companion fork:** the SDL2 window backend lives in [therooftopprinz/public](https://github.com/therooftopprinz/public). You need both forks to build the handheld port.
+**Companion fork:** the SDL2 window backend lives in [therooftopprinz/captainys_public](https://github.com/therooftopprinz/captainys_public). You need both forks to build the handheld port.
 
 ---
 
@@ -38,7 +38,7 @@ R36S pad mapping (cursor vs flight modes, R1-gated incremental throttle, Select 
 Prerequisite: a C/C++ compiler and CMake.
 
 ```sh
-git clone https://github.com/therooftopprinz/public.git
+git clone https://github.com/therooftopprinz/captainys_public.git
 git clone https://github.com/therooftopprinz/YSFLIGHT.git
 cd YSFLIGHT
 mkdir build && cd build
@@ -47,6 +47,8 @@ cmake --build . --config Release --parallel
 ```
 
 That is the classic X11/GLX Linux build (or the platform default on Windows / macOS).
+
+CMake looks for a sibling directory named `captainys_public` or `public`.
 
 ---
 
@@ -61,10 +63,10 @@ Use this when you want the handheld SDL2 backend.
 - OpenGL / X11 headers still needed for some of the public libraries (`libgl-dev`, `libglu1-mesa-dev`, `libx11-dev`)
 - On device or for the device binary: [gl4es](https://github.com/ptitSeb/gl4es) providing `libGL.so.1` that the launcher puts on `LD_LIBRARY_PATH`
 
-Clone **this** fork of `public` next to `YSFLIGHT` (same parent directory). CMake expects that layout.
+Clone **this** fork of captainys’ public libraries next to `YSFLIGHT` (same parent directory). CMake accepts either folder name `captainys_public` or `public`.
 
 ```sh
-git clone https://github.com/therooftopprinz/public.git
+git clone https://github.com/therooftopprinz/captainys_public.git
 git clone https://github.com/therooftopprinz/YSFLIGHT.git
 cd YSFLIGHT
 mkdir build-sdl && cd build-sdl

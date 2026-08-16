@@ -20,10 +20,18 @@ endif()
 
 include_directories(${CMAKE_CURRENT_SOURCE_DIR})
 
+# Prefer the upstream sibling name "public"; also accept this fork's
+# repository name "captainys_public" when cloned as-is from GitHub.
 if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/../public/src)
 	add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../public/src public)
-else()
+elseif(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/../captainys_public/src)
+	add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../captainys_public/src public)
+elseif(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/../../public/src)
 	add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../../public/src public)
+elseif(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/../../captainys_public/src)
+	add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../../captainys_public/src public)
+else()
+	message(FATAL_ERROR "Cannot find captainys public libraries (expected sibling public/ or captainys_public/)")
 endif()
 
 add_subdirectory(common)
