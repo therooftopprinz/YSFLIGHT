@@ -78,6 +78,7 @@ public:
 	void DrawSpoiler(const double &x0,const double &y0,const double &wid,const double &hei,const double &spoiler);
 
 	void DrawAutoPilot(const double &x0,const double &y0,const double &wid,const double &hei,YSBOOL autoPilot);
+	void DrawAutoTrim(const double &x0,const double &y0,const double &fontWid,const double &fontHei);
 
 	void DrawControlSurface(
 	    const double &x0,const double &y0,const double &wid,const double &hei,

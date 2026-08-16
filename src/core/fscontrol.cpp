@@ -46,6 +46,8 @@ void FsFlightControl::Initialize(void)
 	ctlRudder=0.0;
 	ctlAileron=0.0;
 
+	autoTrimMode=YSFALSE;
+
 	ctlFireWeaponButtonExt=YSFALSE;
 	ctlFireGunButtonExt=YSFALSE;
 	ctlFireAAMButtonExt=YSFALSE;
@@ -153,7 +155,7 @@ YSRESULT FsFlightControl::ProcessButtonFunction(const double &/*cTime*/,FsExiste
 	// case FSBTF_TRIMDOWN:                      //  Elevator Trim Down  Processed in SimControlByUser.  Effect depends on dt.
 	//	breauk;
 	case FSBTF_AUTOTRIM:                      //  Auto Trim
-		ctlElvTrim=YsBound(ctlElvTrim+ctlElevator,-1.0,1.0);
+		YsFlip(autoTrimMode);
 		return YSOK;
 	case FSBTF_THROTTLEUP:                    //  Throttle Add Power
 		ctlThrottle=YsSmaller(ctlThrottle+0.05,1.0);
@@ -326,10 +328,10 @@ YSRESULT FsFlightControl::ProcessButtonFunction(const double &/*cTime*/,FsExiste
 		ctlSpoiler=(ctlSpoiler<0.5 ? 1.0 : 0.0);
 		return YSOK;
 	case FSBTF_SPOILEREXTEND:                 //  Spoiler Extend
-		ctlSpoiler=YsSmaller(ctlSpoiler+0.25,1.0);
+		ctlSpoiler=YsSmaller(ctlSpoiler+0.20,1.0);
 		return YSOK;
 	case FSBTF_SPOILERRETRACT:                //  Spoiler Retract
-		ctlSpoiler=YsGreater(ctlSpoiler-0.25,0.0);
+		ctlSpoiler=YsGreater(ctlSpoiler-0.20,0.0);
 		return YSOK;
 	case FSBTF_BRAKEONOFF:                    //  Brake On/Off
 		ctlBrake=(ctlBrake<0.5 ? 1.0 : 0.0);
@@ -1303,7 +1305,7 @@ static struct FsButtonFunctionString fsButtonFuncStr[]=
 	{FSBTF_REVERSETHRUST,        "REVERSETHRUST",        "Reverse Thrust"},
 	{FSBTF_OPENSUBWINDOWMENU,    "OPENSUBWINDOWMENU",    "Open Sub-Window Menu"},
 
-	{FSBTF_CHANGEHUDCOLOR,       "CHANGEHUDCOLOR",       "Change HUD Color"},
+	{FSBTF_TOGGLEHUD,            "TOGGLEHUD",            "Cycle HUD / Instrument Panel"},
 	{FSBTF_PAUSE,                "PAUSESIMULATION",      "Pause Simulation"},
 
 	{FSBTF_OPENVORMENU,          "OPENVORMENU",          "Select VOR"},
@@ -1754,7 +1756,7 @@ void FsControlAssignment::SetDefaultKeyAssign(void)
 	AddKeyAssignment(FSKEY_R,       FSBTF_FLAPUP);
 	AddKeyAssignment(FSKEY_F,       FSBTF_FLAPDOWN);
 	AddKeyAssignment(FSKEY_O,       FSBTF_OPENSUBWINDOWMENU);
-	AddKeyAssignment(FSKEY_9,       FSBTF_CHANGEHUDCOLOR);
+	AddKeyAssignment(FSKEY_9,       FSBTF_TOGGLEHUD);
 	AddKeyAssignment(FSKEY_PAUSEBREAK,FSBTF_PAUSE);
 	AddKeyAssignment(FSKEY_F10,     FSBTF_GHOSTVIEW);
 	AddKeyAssignment(FSKEY_L,       FSBTF_OPENVORMENU);

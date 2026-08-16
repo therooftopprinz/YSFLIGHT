@@ -167,6 +167,7 @@ FsSimulation::FsSimulation(FsWorld *w) : airplaneList(FsAirplaneAllocator),groun
 
 	SetTerminate(YSFALSE);
 	pause=YSFALSE;
+	hudMode=FSHUD_HUDANDPANEL;
 	canContinue=YSTRUE;
 
 	escKeyCount=0;
@@ -4614,6 +4615,35 @@ void FsSimulation::SimCheckEndOfFlightRecord(void)
 	}
 }
 
+/* Auto trim, after INAV's servo auto trim: instead of snapshotting the stick
+   once, the trim keeps walking towards the elevator the pilot is holding, so
+   the pilot ends up holding nothing.  It stands down while the aeroplane is
+   being manoeuvred - a hard pull or a banked turn is not a mistrim, and
+   absorbing one would leave the aeroplane trimmed into a pull-up. */
+void FsSimulation::AutoTrim(FsAirplane &air,const double &dt)
+{
+	const double absorbPerSecond=0.5;
+	const double manoeuvreInput=0.5;
+	const double turnInput=0.15;
+	const double maxBank=YsPi/6.0;
+
+	const FSFLIGHTSTATE sta=air.Prop().GetFlightState();
+	if(FSGROUND==sta || FSGROUNDSTATIC==sta)
+	{
+		return;
+	}
+	if(manoeuvreInput<YsAbs(userInput.ctlElevator) ||
+	   turnInput<YsAbs(userInput.ctlAileron) ||
+	   turnInput<YsAbs(userInput.ctlRudder) ||
+	   maxBank<YsAbs(air.GetAttitude().b()))
+	{
+		return;
+	}
+
+	userInput.ctlElvTrim=YsBound(
+	    userInput.ctlElvTrim+userInput.ctlElevator*absorbPerSecond*dt,-1.0,1.0);
+}
+
 void FsSimulation::SimControlByUser(const double &dt,FSUSERCONTROL userControl)
 {
 	int mx,my;
@@ -4952,6 +4982,10 @@ void FsSimulation::SimControlByUser(const double &dt,FSUSERCONTROL userControl)
 			if(YSTRUE==ctlAssign.IsButtonPressed(FSBTF_TRIMDOWN,joy))
 			{
 				userInput.ctlElvTrim=YsSmaller(userInput.ctlElvTrim-0.025*dt, 1.0);
+			}
+			if(YSTRUE==userInput.autoTrimMode)
+			{
+				AutoTrim(*playerPlane,dt);
 			}
 			if(YSTRUE==ctlAssign.IsButtonPressed(FSBTF_TURRETLEFT,joy))
 			{
@@ -5667,24 +5701,23 @@ void FsSimulation::SimProcessButtonFunction(FSBUTTONFUNCTION fnc,FSUSERCONTROL u
 	case FSBTF_INFLTCONFIG:
 		subMenu.SetSubMenu(this,FSSUBMENU_INFLTCONFIG);
 		break;
-	case FSBTF_CHANGEHUDCOLOR:
-		if(hud->hudCol.Ri()==100 && hud->hudCol.Gi()==255 && hud->hudCol.Bi()==100)
+	case FSBTF_TOGGLEHUD:
+		hudMode=(FSHUDMODE)((hudMode+1)%FSHUD_NUMMODE);
+		// On an aircraft that has no HUD of its own two of the three modes look
+		// the same, so say which one is now selected rather than leaving the
+		// player guessing whether the button did anything.
+		switch(hudMode)
 		{
-			hud->hudCol.SetIntRGB(100,100,255);
+		case FSHUD_PANELONLY:
+			AddTimedMessage("INSTRUMENT PANEL ONLY");
+			break;
+		case FSHUD_HUDONLY:
+			AddTimedMessage("HUD ONLY");
+			break;
+		default:
+			AddTimedMessage("HUD AND INSTRUMENT PANEL");
+			break;
 		}
-		else if(hud->hudCol.Ri()==100 && hud->hudCol.Gi()==100 && hud->hudCol.Bi()==255)
-		{
-			hud->hudCol.SetIntRGB(255,255,255);
-		}
-		else if(hud->hudCol.Ri()==255 && hud->hudCol.Gi()==255 && hud->hudCol.Bi()==255)
-		{
-			hud->hudCol.SetIntRGB(255,100,100);
-		}
-		else
-		{
-			hud->hudCol.SetIntRGB(100,255,100);
-		}
-		hud2->SetColor(hud->hudCol);
 		break;
 	case FSBTF_PAUSE:
 		if(netServer==NULL && netClient==NULL && userControl!=FSUSC_DISABLE)
@@ -6570,6 +6603,15 @@ void FsSimulation::SimDrawScreen(
 		nFrameForFpsCount=0;
 		lastFpsUpdateTime=fpsTimer;
 		nextFpsUpdateTime=fpsTimer+500;
+
+		/* One line every half-second when YSFPSLOG is set.  Used for remote
+		   performance runs on the handheld where the HUD counter alone is
+		   awkward to sample. */
+		if(NULL!=getenv("YSFPSLOG") && 1.0<fps)
+		{
+			printf("YSFPS %.2lf\n",fps);
+			fflush(stdout);
+		}
 	}
 
 #ifdef CRASHINVESTIGATION_SIMDRAWSCREEN
@@ -6583,7 +6625,9 @@ void FsSimulation::SimDrawScreen(
 
 		char str[256];
 		sprintf(str,"%.2lf FPS",fps);
-		FsDrawString(0,hei-2,str,YsWhite());
+		const int textWid=(int)strlen(str)*fsDirectFixedFontRenderer.GetFontWidth();
+		const int margin=4;
+		FsDrawString(wid-textWid-margin,fsDirectFixedFontRenderer.GetFontHeight()+margin,str,YsWhite());
 	}
 
 
@@ -8133,6 +8177,11 @@ void FsSimulation::SimDrawHud3d(const YsVec3 &fakeViewPos,const YsAtt3 &instView
 		const FsInstrumentIndication &inst=cockpitIndicationSet.inst;
 
 		// HUD2 >>
+		// Stays on the bare airframe attitude on purpose.  The HUD has to
+		// overlay the real horizon, so it must never be rotated to suit the
+		// pilot's head: FSHUD_HUDONLY brings it to eye level by turning the
+		// cockpit camera instead, which moves the world with it and so keeps
+		// the pitch ladder conformal.
 		hud2->BeginDrawHud(fakeViewPos,playerPlane->GetAttitude());
 		{
 			YsAtt3 indicatedAttitude(
@@ -8207,6 +8256,11 @@ void FsSimulation::SimDrawHud3d(const YsVec3 &fakeViewPos,const YsAtt3 &instView
 				inst.rudder);
 
 			hud2->DrawElevatorTrim(-1.0,-0.7,0.05,0.60,inst.elevatorTrim);
+
+			if(YSTRUE==userInput.autoTrimMode)
+			{
+				hud2->DrawAutoTrim(-1.06,-0.06,0.03,0.045);
+			}
 
 			hud2->DrawMachAndG(-1.05,0.2-0.02,0.02,0.03,inst.mach,inst.gForce);
 
@@ -9599,7 +9653,19 @@ void FsSimulation::GetProjection(FsProjection &prj,const ActualViewMode &actualV
 
 	playerPlane=GetPlayerAirplane();
 
-	if(0!=(GetInstrumentDrawSwitch(actualViewMode)&FSISS_2DHUD))
+	// A SCRNCNTR offset exists to push the out-the-window view clear of the
+	// instrument panel, so once the panel is hidden it only shoves the HUD into
+	// a corner and clips it: the Concorde asks for 0.5, putting the centre a
+	// quarter of the way down the screen with no room left for the top of the
+	// HUD.  Centring gives the symbology the whole screen to fit in.  Like a
+	// camera rotation this moves the world and the HUD together, so the HUD
+	// stays lined up with the horizon.
+	if(FSHUD_HUDONLY==hudMode && FSCOCKPITVIEW==actualViewMode.actualViewMode)
+	{
+		prj.cx=wid/2;
+		prj.cy=hei/2;
+	}
+	else if(0!=(GetInstrumentDrawSwitch(actualViewMode)&FSISS_2DHUD))
 	{
 		prj.cx=wid/2;
 		prj.cy=hei*2/3;
@@ -10215,11 +10281,20 @@ void FsSimulation::SimDecideViewpoint_Air(ActualViewMode &actualViewMode,FSVIEWM
 
 			actualViewMode.viewAttitude=playerPlane->GetAttitude();
 
-			const YsAtt3 &neutAtt=playerPlane->Prop().GetNeutralHeadDirection();
+			// The neutral head direction exists to tilt the pilot's gaze onto
+			// the instrument panel, so with the panel switched off it only
+			// drags the boresight HUD out of the windscreen.  Looking straight
+			// down the boresight instead brings the HUD to eye level, and
+			// because it is the camera that turns the HUD keeps overlaying the
+			// real horizon.
+			if(FSHUD_HUDONLY!=hudMode)
+			{
+				const YsAtt3 &neutAtt=playerPlane->Prop().GetNeutralHeadDirection();
 
-			actualViewMode.viewAttitude.YawLeft(neutAtt.h());
-			actualViewMode.viewAttitude.NoseUp(neutAtt.p());
-			actualViewMode.viewAttitude.SetB(actualViewMode.viewAttitude.b()+neutAtt.b());
+				actualViewMode.viewAttitude.YawLeft(neutAtt.h());
+				actualViewMode.viewAttitude.NoseUp(neutAtt.p());
+				actualViewMode.viewAttitude.SetB(actualViewMode.viewAttitude.b()+neutAtt.b());
+			}
 
 			actualViewMode.viewAttitude.YawLeft(userInput.viewHdg);
 			actualViewMode.viewAttitude.NoseUp(userInput.viewPch);
@@ -13712,6 +13787,22 @@ unsigned int FsSimulation::GetInstrumentDrawSwitch(const ActualViewMode &actualV
 			{
 				sw&=~FSISS_3DINSTPANEL;
 			}
+		}
+
+		// Applied last so that it overrides the per-aircraft and per-view
+		// switches above: FSHUD_HUDONLY has to be able to add a HUD the
+		// aircraft never asked for, not just take one away.
+		switch(hudMode)
+		{
+		case FSHUD_PANELONLY:
+			sw&=~(FSISS_3DHUD|FSISS_2DHUD);
+			break;
+		case FSHUD_HUDONLY:
+			sw&=~FSISS_3DINSTPANEL;
+			sw|=(YSTRUE==cfgPtr->useSimpleHud ? FSISS_2DHUD : FSISS_3DHUD);
+			break;
+		default:
+			break;
 		}
 	}
 

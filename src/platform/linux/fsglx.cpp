@@ -258,6 +258,22 @@ YSRESULT FsPollJoystick(FsJoystick &joy,int joyId)
 	else if(0<=joyId && joyId<nJoystick)
 	{
 		int i;
+
+		// While the pad is moving the menu cursor, the sticks must not also
+		// fly the airplane.  Repeating the last reading leaves the controls
+		// where the pilot left them.
+		static FsJoystick lastReading[FsMaxNumJoystick];
+		static YSBOOL lastReadingReady[FsMaxNumJoystick]={YSFALSE};
+		if(0!=FsIsGamepadMenuMode() && YSTRUE==lastReadingReady[joyId])
+		{
+			joy=lastReading[joyId];
+			for(i=0; i<FsMaxNumJoyTrig; i++)
+			{
+				joy.trg[i]=YSFALSE;
+			}
+			return YSOK;
+		}
+
 		joystick[joyId].Read();
 
 		for(i=0; i<FsMaxNumJoyAxis && i<YsJoyReaderMaxNumAxis; i++)
@@ -284,6 +300,15 @@ YSRESULT FsPollJoystick(FsJoystick &joy,int joyId)
 			}
 		}
 
+		// A stick that is metering throttle must not steer at the same time.
+		// Centre rather than repeat the last value, so that the surface returns
+		// to neutral instead of staying wherever the throttle push left it.
+		const int suppressAxis=FsGetSuppressedJoyAxis();
+		if(0<=suppressAxis && suppressAxis<FsMaxNumJoyAxis)
+		{
+			joy.axs[suppressAxis]=0.5;
+		}
+
 		if(0!=joystick[joyId].hatSwitch[0].exist && 0!=joystick[joyId].hatSwitch[0].GetDiscreteValue())
 		{
 			int deg;
@@ -292,6 +317,9 @@ YSRESULT FsPollJoystick(FsJoystick &joy,int joyId)
 			joy.pov=YSTRUE;
 			joy.povAngle=(double)deg*YsPi/180.0;
 		}
+
+		lastReading[joyId]=joy;
+		lastReadingReady[joyId]=YSTRUE;
 	}
 
 	return YSERR;

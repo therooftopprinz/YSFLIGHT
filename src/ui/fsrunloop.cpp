@@ -1858,6 +1858,17 @@ YSBOOL FsRunLoop::RunOneStep(void)
 #ifdef CRASHINVESTIGATION
 	printf("%s %d\n",__FUNCTION__,__LINE__);
 #endif
+
+	// The handheld build has no window close button, so its exit hot key asks
+	// to quit here instead.  Only the menu run mode reports the terminate flag
+	// back to the main loop, so ending the loop has to be done here or the hot
+	// key would do nothing while a flight is in progress.
+	if(0!=FsIsQuitRequested())
+	{
+		this->terminate=YSTRUE;
+		return YSFALSE;
+	}
+
 	if(0<runModeStack.GetN())
 	{
 		YSBOOL res=YSFALSE;

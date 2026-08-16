@@ -118,7 +118,7 @@ enum FSBUTTONFUNCTION
 
 	FSBTF_OPENSUBWINDOWMENU,             //  Open Sub Window Menu
 
-	FSBTF_CHANGEHUDCOLOR,                //  Change HUD color
+	FSBTF_TOGGLEHUD,                     //  Cycle HUD+panel / panel only / HUD only
 	FSBTF_PAUSE,                         //  Pause
 
 	FSBTF_GHOSTVIEW,                     //  Ghost mode.
@@ -227,6 +227,14 @@ public:
 
 	double ctlElevator,ctlElvTrim,ctlRudder,ctlAileron;
 	double ctlTurretHdg,ctlTurretPch;
+
+	// Auto trim is a mode rather than a one-shot capture: while it is on, the
+	// elevator the pilot is holding is slowly absorbed into the trim, the way
+	// INAV's servo auto trim walks the servo midpoint towards the correction it
+	// keeps having to apply.  A one-shot capture is unusable on a hand-held,
+	// where reaching the modifier button means letting the spring-loaded stick
+	// return to centre first, so the capture always read zero.
+	YSBOOL autoTrimMode;
 
 	// Buttn press from external source (script) >>
 	YSBOOL ctlFireWeaponButtonExt;

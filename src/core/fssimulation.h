@@ -179,6 +179,16 @@ public:
 		FSISS_3DHUD=4,
 		FSISS_3DINSTPANEL=8
 	};
+	// Cycled by FSBTF_TOGGLEHUD.  HUDONLY forces a HUD on even for the aircraft
+	// that ask for an instrument panel instead of one (INSTPANL in the .dat),
+	// which is the only way to get a HUD in an airliner or a warbird.
+	enum FSHUDMODE
+	{
+		FSHUD_HUDANDPANEL,
+		FSHUD_PANELONLY,
+		FSHUD_HUDONLY,
+		FSHUD_NUMMODE
+	};
 
 	class ViewModeAndIndex
 	{
@@ -285,6 +295,7 @@ protected:
 
 	int escKeyCount;
 	YSBOOL pause;
+	FSHUDMODE hudMode;
 	YSBOOL canContinue;
 
 	FSENVIRONMENT env;
@@ -866,6 +877,7 @@ protected:
 	void SimCheckEndOfSimulation(void);
 	void SimCheckEndOfFlightRecord(void);
 	void SimControlByUser(const double &dt,FSUSERCONTROL userControl);
+	void AutoTrim(class FsAirplane &air,const double &dt);
 	void SimPlayerAircraftGetTrouble(void);
 	void SendAircraftRandomTrouble(FsAirplane &air,int reliability,YSBOOL record);
 	void SendAircraftTrouble(FsAirplane &air,FSAIRCRAFTTROUBLE trouble,YSBOOL record);

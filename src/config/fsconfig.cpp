@@ -77,7 +77,7 @@ void FsFlightConfig::SetDefault(void)
 	gndLod=0;
 
 	showUserName=0;
-	showFps=YSFALSE;
+	showFps=YSTRUE;
 
 	showIAS=YSTRUE;
 

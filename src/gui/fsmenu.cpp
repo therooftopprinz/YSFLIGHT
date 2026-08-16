@@ -330,6 +330,35 @@ void FsGuiMainDialog::Make(void)
 		    "http://www.vector.co.jp/award/vote.html?no=se121250&vasts=vote",YSTRUE);
 	}
 
+	// The handheld ships without a manual and the pad mapping is not the one a
+	// keyboard player would guess, so the whole scheme is spelled out here.
+	auto padHelp=AddStaticText(0,FSKEY_NULL,
+	    "----- R36S PAD -----\n"
+	    "SELECT TAP    FLIGHT <-> MENU CURSOR MODE\n"
+	    "LEFT STICK    AILERON / ELEVATOR\n"
+	    "RIGHT X       RUDDER\n"
+	    "R1 + RIGHT Y  THROTTLE UP / DOWN\n"
+	    "R1 TAP        AFTERBURNER\n"
+	    "A B X Y       FIRE  WEAPON  FLARE  GEAR\n"
+	    "L1 L2 R2      BRAKE  WHEEL BRAKE  GUN\n"
+	    "D-PAD  START  VIEWS  MENU\n"
+	    "HOLD SELECT   SECOND FUNCTION OF A BUTTON\n"
+	    " + A B X Y    RADAR  AUTOPILOT  BAY  TRIM\n"
+	    " + L1 R1      FLAP UP / DOWN\n"
+	    " + L2 R2      SPOILER -20% / +20%\n"
+	    " + D-PAD L/R  CYCLE HUD / VELOCITY VECTOR\n"
+	    " + START      QUIT TO EMULATIONSTATION\n"
+	    "CURSOR MODE   A CLICK  L2 SLOW  R2 FAST  +Y KBD",
+	    YSTRUE);
+	// The dialog is transparent and the menu background is a photograph, so the
+	// text needs to bring its own plate along or it lands on whatever happens to
+	// be behind it.  The plate is 25% transparent (alpha 0.75).
+	YsColor padHelpBg;
+	padHelpBg.SetDoubleRGBA(0.0,0.0,0.0,0.75);
+	padHelp->SetBgColor(padHelpBg);
+	padHelp->SetFill(YSTRUE);
+	padHelp->SetFgColor(YsGreen());
+
 	SetTransparency(YSTRUE);
 	Fit();
 }

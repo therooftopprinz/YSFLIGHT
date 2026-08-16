@@ -16,6 +16,63 @@
 #endif
 
 
+/* gl4es implements neither glBitmap nor the display lists that are built out of
+   it, and calling into those lists takes down the process.  glRasterPos3d plus
+   glCallLists is therefore replaced by projecting the anchor by hand and
+   blitting the string as a textured quad, which is what the 2D HUD text already
+   does.  The point is taken in the current model view, exactly as glRasterPos3d
+   would have. */
+static void FsHudDrawStringAt3D(const YsVec3 &pos,const char str[],const YsColor &col)
+{
+	if(NULL==str || 0==str[0])
+	{
+		return;
+	}
+
+	GLdouble modelview[16],projection[16];
+	GLint viewport[4];
+	glGetDoublev(GL_MODELVIEW_MATRIX,modelview);
+	glGetDoublev(GL_PROJECTION_MATRIX,projection);
+	glGetIntegerv(GL_VIEWPORT,viewport);
+
+	GLdouble winX,winY,winZ;
+	if(GL_TRUE!=gluProject(pos.x(),pos.y(),pos.z(),modelview,projection,viewport,&winX,&winY,&winZ))
+	{
+		return;
+	}
+	if(0.0>winZ || 1.0<winZ)  // behind the eye, or beyond the far plane
+	{
+		return;
+	}
+
+	// The 2D text projection counts Y downward from the top of the viewport.
+	const int x=(int)(winX-(double)viewport[0]);
+	const int y=(int)((double)viewport[3]-(winY-(double)viewport[1]));
+
+	const GLboolean depthWasEnabled=glIsEnabled(GL_DEPTH_TEST);
+	glDisable(GL_DEPTH_TEST);
+
+	glMatrixMode(GL_PROJECTION);
+	glPushMatrix();
+	glLoadIdentity();
+	glOrtho(0,(GLdouble)viewport[2],(GLdouble)viewport[3],0,-1,1);
+	glMatrixMode(GL_MODELVIEW);
+	glPushMatrix();
+	glLoadIdentity();
+
+	FsDrawString(x,y,str,col);
+
+	glMatrixMode(GL_PROJECTION);
+	glPopMatrix();
+	glMatrixMode(GL_MODELVIEW);
+	glPopMatrix();
+
+	if(GL_TRUE==depthWasEnabled)
+	{
+		glEnable(GL_DEPTH_TEST);
+	}
+}
+
 void FsHeadUpDisplay::DrawCrossHair(void)
 {
 	long cenX,cenY,lng,lat;
@@ -708,10 +765,7 @@ void FsHeadUpDisplay::DrawAttitude(const YsVec3 &pos,const YsAtt3 &att,const YsV
 			char str[256];
 			sprintf(str,"%3d",i);
 
-			glRasterPos3dv(p2);
-			glListBase(FS_GL_FONT_BITMAP_BASE);
-			glCallLists(strlen(str),GL_UNSIGNED_BYTE,str);
-			glListBase(0);
+			FsHudDrawStringAt3D(p2,str,hudCol);
 		}
 	}
 
@@ -837,17 +891,11 @@ void FsHeadUpDisplay::DrawCircleContainer
 	}
 	glEnd();
 
-	glRasterPos3d(rel.z()/18.0,-rel.z()/18.0,0.0);
-	glListBase(FS_GL_FONT_BITMAP_BASE);
-	glCallLists(strlen(caption),GL_UNSIGNED_BYTE,caption);
-	glListBase(0);
+	FsHudDrawStringAt3D(YsVec3(rel.z()/18.0,-rel.z()/18.0,0.0),caption,col);
 
 	if(caption2!=NULL)
 	{
-		glRasterPos3d(rel.z()/18.0,rel.z()/18.0,0.0);
-		glListBase(FS_GL_FONT_BITMAP_BASE);
-		glCallLists(strlen(caption2),GL_UNSIGNED_BYTE,caption2);
-		glListBase(0);
+		FsHudDrawStringAt3D(YsVec3(rel.z()/18.0,rel.z()/18.0,0.0),caption2,col);
 	}
 
 	glPopMatrix();

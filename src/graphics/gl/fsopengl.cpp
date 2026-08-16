@@ -18,6 +18,7 @@
 
 
 #include <ysbitmap.h>
+#include <ysglbmpblit.h>
 
 
 #ifndef __APPLE__
@@ -830,15 +831,13 @@ void FsDrawTitleBmp(const YsBitmap &bmp,YSBOOL tile)
 		{
 			for(y=hei-1; y>0; y-=bmpHei)
 			{
-				glRasterPos2i(x,y);
-				glDrawPixels(bmpWid,bmpHei,GL_RGBA,GL_UNSIGNED_BYTE,bmp.GetRGBABitmapPointer());
+				YsGlBlitRGBA2D(x,y,bmpWid,bmpHei,bmp.GetRGBABitmapPointer());
 			}
 		}
 	}
 	else
 	{
-		glRasterPos2i(wid-bmpWid,hei-1);
-		glDrawPixels(bmpWid,bmpHei,GL_RGBA,GL_UNSIGNED_BYTE,bmp.GetRGBABitmapPointer());
+		YsGlBlitRGBA2D(wid-bmpWid,hei-1,bmpWid,bmpHei,bmp.GetRGBABitmapPointer());
 	}
 
 	glFlush();
@@ -857,8 +856,7 @@ void FsDrawBmp(const YsBitmap &bmp,int x,int y)
 	bmpWid=bmp.GetWidth();
 	bmpHei=bmp.GetHeight();
 
-	glRasterPos2i(x,y+bmpHei-1);
-	glDrawPixels(bmpWid,bmpHei,GL_RGBA,GL_UNSIGNED_BYTE,bmp.GetRGBABitmapPointer());
+	YsGlBlitRGBA2D(x,y+bmpHei-1,bmpWid,bmpHei,bmp.GetRGBABitmapPointer());
 
 #ifdef YSOGLERRORCHECK
 	FsOpenGlShowError("FsDrawBmp Out");

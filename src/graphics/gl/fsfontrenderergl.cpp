@@ -2,6 +2,7 @@
 #include "graphics/common/fsopengl.h"
 
 #include <ysglfontdata.h>
+#include <ysglbmpblit.h>
 #include <yssystemfont.h>
 
 #ifdef _WIN32
@@ -35,12 +36,10 @@ YSRESULT FsDirectFixedFontRenderer::RequestDefaultFontWithPixelHeight(unsigned i
 
 YSRESULT FsDirectFixedFontRenderer::RenderAsciiStringSingleLine(int leftX,int bottomY,const char str[],const YsColor &col)
 {
-	glColor3d(col.Rd(),col.Gd(),col.Bd());
-	glRasterPos2i(leftX,bottomY);
-
-	glListBase(FS_GL_FONT_BITMAP_BASE);
-	glCallLists((GLsizei)strlen(str),GL_UNSIGNED_BYTE,str);
-	glListBase(0);
-
+	if(NULL==fontPtr)
+	{
+		return YSERR;
+	}
+	YsGlBlitFontString2D(leftX,bottomY,str,fontPtr,fontWid,fontHei,col.Rf(),col.Gf(),col.Bf());
 	return YSOK;
 }

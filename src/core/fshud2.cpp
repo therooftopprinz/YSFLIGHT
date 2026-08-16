@@ -632,6 +632,15 @@ void FsHud2::DrawAutoPilot(const double &x0,const double &y0,const double &wid,c
 	FsAddWireFontVertexBuffer(lineVtxBuf,lineColBuf,triVtxBuf,triColBuf,x,y,zPlane,"AUTO",hudCol,fontWid,fontHei);
 }
 
+/* Annunciator for the auto trim mode.  It goes next to the elevator trim
+   scale, which is the gauge it drives. */
+void FsHud2::DrawAutoTrim(const double &x0,const double &y0,const double &fontWid,const double &fontHei)
+{
+	FsAddWireFontVertexBuffer(
+	    lineVtxBuf,lineColBuf,triVtxBuf,triColBuf,
+	    (float)x0,(float)y0,zPlane,"A/TRIM",hudCol,(float)fontWid,(float)fontHei);
+}
+
 void FsHud2::DrawMachAndG(const double &x0,const double &y0,const double &fontWid,const double &fontHei,const double &mach,const double &g)
 {
 	char str[256];

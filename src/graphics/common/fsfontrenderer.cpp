@@ -1,5 +1,6 @@
 #include "graphics/common/fsfontrenderer.h"
 #include <yssystemfont.h>
+#include <fsgui.h>
 
 
 YsSystemFontRenderer fsUnicodeRenderer;
@@ -69,6 +70,19 @@ YSRESULT FsSetFont(const char /*fontName*/[],int fontHeight)
 	fsUnicodeRenderer.RequestDefaultFontWithPixelHeight(fontHeight);
 	fsAsciiRenderer.RequestDefaultFontWithPixelHeight(fontHeight);
 	fsDirectFixedFontRenderer.RequestDefaultFontWithPixelHeight(fontHeight);
+
+	// On Linux the system font renderer rasterizes through X11.  Without a
+	// display it silently returns empty bitmaps, which leaves every dialog
+	// label blank, so use the built-in bitmap font instead.
+	int probeWid=0,probeHei=0;
+	if(YSOK!=fsUnicodeRenderer.GetTightRenderSize(probeWid,probeHei,L"X") ||
+	   0>=probeWid || 0>=probeHei)
+	{
+		if(FsGuiObject::defUnicodeRenderer==&fsUnicodeRenderer)
+		{
+			FsGuiObject::defUnicodeRenderer=&fsAsciiRenderer;
+		}
+	}
 	return YSOK;
 }
 
