@@ -281,6 +281,14 @@ void FsInitializeOpenGL(void)
 	glEnable(GL_STENCIL_TEST);
 	glStencilFunc(GL_ALWAYS,0,0);
 
+	if(NULL!=getenv("YSGL_GLINFO"))
+	{
+		GLint depthBits=0,stencilBits=0;
+		glGetIntegerv(GL_DEPTH_BITS,&depthBits);
+		glGetIntegerv(GL_STENCIL_BITS,&stencilBits);
+		fprintf(stderr,"YSGLINFO depth=%d stencil=%d\n",(int)depthBits,(int)stencilBits);
+	}
+
 	YsGLSLCreateSharedRenderer();
 	YsGLSLSetShared3DRendererAlphaCutOff(0.02f);
 

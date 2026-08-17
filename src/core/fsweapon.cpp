@@ -1569,7 +1569,9 @@ YSRESULT FsWeapon::AddKillCredit(YsList <FsKillCredit> *&killCredit,FsExistence 
 		neo->dat.where=pos;
 		neo->dat.when=when;
 
-		killCredit=killCredit->Append(neo);
+		// killCredit starts NULL; Append is a member and compilers may assume
+		// this!=NULL, so the null-this branch inside Append is optimized away.
+		killCredit=YsList <FsKillCredit>::LegacyAppend(killCredit,neo);
 	}
 	return YSOK;
 }
@@ -2439,7 +2441,7 @@ YSRESULT FsWeaponHolder::Load(FILE *fp,FsSimulation *sim)
 							neo->dat.where.Set(x,y,z);
 							neo->dat.when=when;
 						}
-						killCredit=killCredit->Append(neo);
+						killCredit=YsList <FsKillCredit>::LegacyAppend(killCredit,neo);
 					}
 					else
 					{

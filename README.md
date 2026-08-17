@@ -159,12 +159,100 @@ path sets `YSGLSL_TEX_TYPE_NONE` before drawing its untextured buffer.  Without
 that, aircraft, ground objects and the joystick models sampled the ground tile
 with no texture bound and came out solid black.
 
+The same opaque program now evaluates exponential fog per vertex and
+interpolates the resulting fog factor.  The previous shader evaluated `exp`
+for every fragment of every overlapping map polygon.  Turning map fog off
+entirely proved that work accounted for about 17% of live frame rate, but made
+distant terrain visually wrong.  Vertex fog preserves the atmospheric blend
+and averaged 12.77 versus 12.11 FPS across five interleaved live-flight pairs,
+about a 5.4% gain.  The exact frozen cockpit scene remained visually equivalent
+apart from normal simulation timing differences.
+
 Disabling `GL_BLEND` around those opaque draws looked attractive on paper and
 measured no better: interleaved blend enable/disable broke up the tiled render
 pass and erased the win.  The `YSGL_OPAQUE_BLEND=1` switch remains for
-profiling, but defaults off.  `GL_STENCIL_TEST` is still required to mask the
-fallback ground mesh behind the scenery map, so it stays enabled.  Set
-`YSGL_OPAQUE_FAST=0` to force the old discard-bearing shaders.
+profiling, but defaults off.  Set `YSGL_OPAQUE_FAST=0` to force the old
+discard-bearing shaders.
+
+#### Where a frame actually goes
+
+Guessing at which renderer change would pay off produced a run of changes that
+measured as noise, so the stages are now measured instead.  `YSGL_SKIP_MAP`,
+`YSGL_SKIP_AIR`, `YSGL_SKIP_GNDMESH`, `YSGL_SKIP_GNDOBJ`, `YSGL_SKIP_FIELD`,
+`YSGL_SKIP_HORIZON` and `YSGL_SKIP_CLOUD` each drop one stage, so the frame time
+it accounts for is the difference against a run with nothing skipped.  Against
+an ~79 ms baseline in live flight the maps cost about 19 ms, the aircraft and
+their cockpits about 10 ms, the fallback ground mesh about 6 ms and the ground
+objects about 5 ms; the horizon, the field objects and the clouds all came out
+inside the noise.  `YSGL_GLINFO=1` prints the depth and stencil bit counts the
+context was actually given.
+
+Splitting the map stage showed the cost is entirely its color pass; the
+color-masked depth pass that follows is free, because the driver turns it into a
+depth-only pass.  That depth pass is still worth keeping: dropping it as well as
+the color pass measured *slower* than dropping the color pass alone, since the
+depth it leaves behind is what lets the GPU reject the aircraft and ground
+objects drawn afterwards.
+
+Shading coplanar map layers only once was tried on top of that cheap-depth
+behavior and **removed**.  The idea was a color-masked prepass visiting map
+objects and their cached primitives in reverse priority, handing each layer a
+small depth bias, then a color pass in the original order testing `GL_EQUAL` so
+that only the topmost layer shades, then a third pass restoring the real
+geometric depth for aircraft and ground objects.
+
+It cannot coexist with the primitive merging above.  Telling layers apart by
+depth needs one bias per layer, but a merged draw carries one bias for all the
+polygons inside it.  Those polygons rasterize the same plane from different
+triangles, so their depths differ by a bit or two, and `GL_EQUAL` rejects
+whichever one did not win the prepare pass.  At Aomori the whole airport arrives
+as a single 252-vertex merged primitive, and the taxiway and apron pavement
+disappeared, leaving the bare runway, which reads as the pavement z-fighting
+with the ground.  Keeping one primitive per polygon for maps makes the frame
+pixel-correct, but an interleaved three-pair A/B on the Hawaii benchmark then
+measured 12.59 FPS against 13.36 without the whole scheme, a 5.8% loss: the
+merging is worth more than the saved overdraw.  The 8% gain recorded during the
+first attempt had been measured against the broken image.
+
+Two things worth remembering from the attempt.  `SimDrawGroundMesh` is not
+involved in any of this; it draws with `GL_ALWAYS` and `glDepthMask(GL_FALSE)`
+and never writes depth under the map.  And a depth bias belongs in the vertex
+shader's `zOffset`, not in `glDepthRangef`: the depth range scales, so its
+separation shrinks to nothing as a surface approaches the near plane, which is
+exactly where runway pavement sits during a takeoff roll, while a clip-space
+offset stays constant at any distance.
+
+A five-pass variant that isolated alpha-sensitive primitives was also tested,
+but the extra traversal reversed the result to 12.14 versus 13.27 FPS.  Falling
+back one plane group at a time was not safe either, because mixing the two depth
+conventions changed priority where neighboring groups met.
+
+Four attempts to cut that map cost were measured and reverted:
+
+* **Front-to-back ordering of the map groups.**  Interleaved A/B runs put the
+  cached order at 12.27 FPS and a near-to-far sort at 12.07.  Terrain maps are
+  laid out side by side on a plane rather than stacked in depth, so they never
+  occlude each other and there is nothing for an early depth test to reject.
+* **Culling batches inside a map.**  About 40% of the cached batches fall
+  outside the frustum, but they are off-screen geometry the GPU already discards
+  cheaply, and the per-frame bounding-box tests cost as much as they saved
+  (12.72 against 12.73 FPS).  It only helped a frozen camera, which reuses the
+  previous frame's results.
+* **Dropping the common ground texture sample.**  The small repeating tile is
+  cache-friendly and not the bottleneck: textured maps averaged 13.57 FPS,
+  while flat-colored maps averaged 13.23.
+* **Masking the ground mesh where the maps already drew.**  The 2016 stencil
+  optimisation this relies on has never run in the GLES2 build: SDL is asked for
+  a 16-bit depth buffer and no stencil, so the context comes back with 0 stencil
+  bits and `glStencilFunc(GL_EQUAL,0,255)` passes everywhere.  Asking for
+  `SDL_GL_STENCIL_SIZE` 8 does grant a stencil buffer and does make the masking
+  work, but carrying it cost more than the masking saved: 12.65 FPS with no
+  stencil buffer, 12.14 once one is allocated, and 12.50 with the mesh masked
+  off behind the maps.
+
+Back-face culling for the scenery was also tried and reverted at 11.38 against
+11.70 FPS; the maps are largely flat and up-facing, so little is back-facing to
+begin with.
 
 #### Benchmarking on device
 
@@ -239,7 +327,11 @@ game runs and restores the previous one on exit.
 Drop a file named `PERPIXEL` in `$GAMEDIR` to force per-pixel shading, which
 looks slightly better and roughly halves the frame rate.
 
-Optional quick start: put a one-line `QUICKFLIGHT` file in `$GAMEDIR` with `Airplane Field StartPosition`, then launch with `-freeflight` as well.
+Optional quick start: put a one-line `QUICKFLIGHT` file in `$GAMEDIR` with
+`Airplane Field StartPosition` and the launcher adds `-freeflight` for you. This
+is a debugging aid that bypasses the title screen, so delete or comment out the
+file when you are done, otherwise the port always boots straight into that
+flight instead of the menu.
 
 ### 3. Sanity checks after deploy
 

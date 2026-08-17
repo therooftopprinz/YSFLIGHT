@@ -915,6 +915,7 @@ protected:
 	class FsProjection SimDrawPrepareRange(const ActualViewMode &actualViewMode,const double &nearZ,const double &farZ) const;
 	class FsProjection SimDrawPrepareNormal(const ActualViewMode &actualViewMode) const; // OpenGL Only
 	void SimDrawBackground(const ActualViewMode &actualViewMode,const FsProjection &proj) const;
+	void SimDrawGroundMesh(const ActualViewMode &actualViewMode) const;
 	void SimDrawMap(const ActualViewMode &actualViewMode,const FsProjection &prj,const double &elvMin,const double &elvMax) const;
 	void SimDrawJoystick(const ActualViewMode &actualViewMode) const;
 	void SimDrawForeground(const ActualViewMode &actualViewMode,const class FsProjection &proj,const FsCockpitIndicationSet &cockpitIndicationSet,YSBOOL demoMode,YSBOOL showTimer,YSBOOL showTimeMarker) const;

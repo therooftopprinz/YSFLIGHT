@@ -39,6 +39,16 @@ static YSBOOL YsGLDisableBlendForOpaqueScenery(void)
 }
 #endif
 
+static YSBOOL YsGLPrintCullingStats(void)
+{
+	static int enabled=-1;
+	if(0>enabled)
+	{
+		const char *env=getenv("YSGL_CULL_STATS");
+		enabled=(NULL!=env && 0!=atoi(env));
+	}
+	return (0!=enabled ? YSTRUE : YSFALSE);
+}
 
 namespace SetUpMatrix
 {
@@ -221,7 +231,6 @@ public:
 	YsArray <GLfloat> protectPlgVtxArray;
 
 	GLuint vboId,vtxPtr,nomPtr,colPtr,flashVtxPtr,flashColPtr,flashPointSizePtr,texCoordPtr,protectPlgPtr;
-
 	YsSceneryGraphicCachePrimitiveTemplate()
 	{
 		vboId=0;
@@ -1139,9 +1148,9 @@ void Ys2DDrawing::Draw(
 
 		for(YSSIZE_T i=0; i<graphicCache->primitiveArray.GetN(); ++i)
 		{
+			Ys2DDrawingGraphicCache::Primitive &primitive=graphicCache->primitiveArray[i];
 			YsGLSL3DRenderer *renderer=NULL;
 			GLenum glPrimitive=GL_POINTS;
-			const Ys2DDrawingGraphicCache::Primitive &primitive=graphicCache->primitiveArray[i];
 
 			if(YSTRUE!=drawPset && 
 			   (primitive.objType==Ys2DDrawingElement::POINTS ||
@@ -1272,7 +1281,8 @@ void Ys2DDrawing::Draw(
 				if(/*rendererType==YSGLSL_RENDERER_TYPE_SHADED3D && */YSTRUE!=useOwnTexture)
 				{
 					glActiveTexture(GL_TEXTURE0);
-					if(nullptr!=YsScenery::commonTexManPtr && YSTRUE==YsScenery::commonTexManPtr->IsReady(YsScenery::commonGroundTexHd))
+					if(nullptr!=YsScenery::commonTexManPtr &&
+					   YSTRUE==YsScenery::commonTexManPtr->IsReady(YsScenery::commonGroundTexHd))
 					{
 						auto unitPtr=YsScenery::commonTexManPtr->GetTexture(YsScenery::commonGroundTexHd);
 						unitPtr->Bind();
@@ -1427,7 +1437,6 @@ void Ys2DDrawing::Draw(
 		{
 			glEnable(GL_BLEND);
 		}
-
 		if(drawBbx==YSTRUE)
 		{
 			DrawBoundingBox(mapMode);
@@ -3258,7 +3267,6 @@ void YsScenery::DrawMapVisual
 #endif
 		NULL
 	};
-
 	glActiveTexture(GL_TEXTURE0);
 	if(nullptr!=commonTexManPtr && YSTRUE==commonTexManPtr->IsReady(commonGroundTexHd))
 	{
@@ -3306,29 +3314,45 @@ void YsScenery::DrawMapVisual
 	// Kamigotoh Field Map at (-27896.9900000000, 80.0000000000, -35060.8300000000)
 	// Do not seem to be in the same group.
 
+	int nMapTested=0,nMapVisible=0;
 	for(auto &samePlaneMapGroup : mapDrawingOrderCache.samePlaneMapGroup)
 	{
+		YsArray <YSBOOL> visible;
+		YsArray <YsMatrix4x4> viewModelTfmArray;
+		for(auto &mapDrawingInfo : samePlaneMapGroup.mapDrawingInfo)
+		{
+			auto viewModelTfm=viewTfm*mapDrawingInfo.mapOwnerToWorldTfm;
+			viewModelTfmArray.Add(viewModelTfm);
+			visible.Add(IsItemVisible(viewModelTfm,projTfm,mapDrawingInfo.mapPtr));
+			++nMapTested;
+			if(YSTRUE==visible.Last())
+			{
+				++nMapVisible;
+			}
+		}
+
 		for(int i=0; i<2; ++i)
 		{
-			if(0==i)
-			{
-				glEnable(GL_DEPTH_TEST);
-				glDepthFunc(GL_LEQUAL);
-				glColorMask(GL_TRUE,GL_TRUE,GL_TRUE,GL_TRUE);
-				glDepthMask(GL_FALSE);
-			}
-			else
+			if(1==i)
 			{
 				glEnable(GL_DEPTH_TEST);
 				glDepthFunc(GL_LEQUAL);
 				glColorMask(GL_FALSE,GL_FALSE,GL_FALSE,GL_FALSE);
 				glDepthMask(GL_TRUE);
 			}
-
-			for(auto &mapDrawingInfo : samePlaneMapGroup.mapDrawingInfo)
+			else
 			{
-				auto viewModelTfm=viewTfm*mapDrawingInfo.mapOwnerToWorldTfm;
-				if(IsItemVisible(viewModelTfm,projTfm,mapDrawingInfo.mapPtr)==YSTRUE)
+				glEnable(GL_DEPTH_TEST);
+				glDepthFunc(GL_LEQUAL);
+				glColorMask(GL_TRUE,GL_TRUE,GL_TRUE,GL_TRUE);
+				glDepthMask(GL_FALSE);
+			}
+
+			for(YSSIZE_T mapIdx=0; mapIdx<samePlaneMapGroup.mapDrawingInfo.GetN(); ++mapIdx)
+			{
+				auto &mapDrawingInfo=samePlaneMapGroup.mapDrawingInfo[mapIdx];
+				auto &viewModelTfm=viewModelTfmArray[mapIdx];
+				if(YSTRUE==visible[mapIdx])
 				{
 					shlTfm=viewModelTfm;
 					shlTfm.Translate(mapDrawingInfo.mapPtr->pos);
@@ -3342,6 +3366,22 @@ void YsScenery::DrawMapVisual
 					     currentTime,&shlTfm);
 				}
 			}
+		}
+	}
+	if(YSTRUE==YsGLPrintCullingStats())
+	{
+		static int frameCount=0;
+		static long long tested=0,visible=0;
+		tested+=nMapTested;
+		visible+=nMapVisible;
+		++frameCount;
+		if(120<=frameCount)
+		{
+			fprintf(stderr,"YSCULL maps visible=%lld tested=%lld ratio=%.3f\n",
+			    visible,tested,(0<tested ? (double)visible/(double)tested : 0.0));
+			frameCount=0;
+			tested=0;
+			visible=0;
 		}
 	}
 

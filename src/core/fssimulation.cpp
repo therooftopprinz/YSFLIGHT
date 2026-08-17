@@ -6746,6 +6746,52 @@ void FsSimulation::SimDrawGuiDialog(void) const
 	FsFlushScene();
 }
 
+// Opt-in switches that drop one rendering stage.  They exist to measure how
+// much of a frame each stage costs on the device, and all default to off.
+static YSBOOL FsSkipRenderStage(const char *envName,int &cache)
+{
+	if(0>cache)
+	{
+		const char *env=getenv(envName);
+		cache=(NULL!=env && 0!=atoi(env));
+	}
+	return (0!=cache ? YSTRUE : YSFALSE);
+}
+static YSBOOL FsSkipGroundMesh(void)
+{
+	static int cache=-1;
+	return FsSkipRenderStage("YSGL_SKIP_GNDMESH",cache);
+}
+static YSBOOL FsSkipHorizon(void)
+{
+	static int cache=-1;
+	return FsSkipRenderStage("YSGL_SKIP_HORIZON",cache);
+}
+static YSBOOL FsSkipMap(void)
+{
+	static int cache=-1;
+	return FsSkipRenderStage("YSGL_SKIP_MAP",cache);
+}
+static YSBOOL FsSkipFieldObject(void)
+{
+	static int cache=-1;
+	return FsSkipRenderStage("YSGL_SKIP_FIELD",cache);
+}
+static YSBOOL FsSkipAirplaneObject(void)
+{
+	static int cache=-1;
+	return FsSkipRenderStage("YSGL_SKIP_AIR",cache);
+}
+static YSBOOL FsSkipGroundObject(void)
+{
+	static int cache=-1;
+	return FsSkipRenderStage("YSGL_SKIP_GNDOBJ",cache);
+}
+static YSBOOL FsSkipCloudObject(void)
+{
+	static int cache=-1;
+	return FsSkipRenderStage("YSGL_SKIP_CLOUD",cache);
+}
 void FsSimulation::SimDrawScreenZBufferSensitive(
 	const FsCockpitIndicationSet &,
 	const YsGLParticleManager &particleMan,
@@ -7035,47 +7081,69 @@ void FsSimulation::SimDrawBackground(const ActualViewMode &actualViewMode,const 
 		break;
 	}
 
-	if(weather->GetFog()==YSTRUE)
+	if(YSTRUE!=FsSkipHorizon())
 	{
-		groundSky->DrawByFog(actualViewMode.viewPoint,actualViewMode.viewAttitude,gnd,sky,horizonColor,farZ,gndSpecular);
-	}
-	else if(cfgPtr->horizonGradation==YSTRUE)
-	{
-		groundSky->DrawGradation(actualViewMode.viewPoint,actualViewMode.viewAttitude,gnd,sky,horizonColor,farZ,gndSpecular);
-	}
-	else
-	{
-		groundSky->DrawCrappy(actualViewMode.viewPoint,gnd,sky,farZ,gndSpecular);
-	}
-
-	// 2016/11/26 To reduce the number of fragments,
-	//            DrawGroundMesh only draws pixels where stencil value is equal to zero.
-	//            SimDrawMap must increment the stencil value in each pixel.
-	{
-		int div;
-		auto y=actualViewMode.viewPoint.y();
-		if(y>2700.0)
+		if(weather->GetFog()==YSTRUE)
 		{
-			div=4050;
+			groundSky->DrawByFog(actualViewMode.viewPoint,actualViewMode.viewAttitude,gnd,sky,horizonColor,farZ,gndSpecular);
 		}
-		else if(y>900.0)
+		else if(cfgPtr->horizonGradation==YSTRUE)
 		{
-			div=1350;
-		}
-		else if(y>300.0)
-		{
-			div=450;
-		}
-		else if(y>100.0)
-		{
-			div=150;
+			groundSky->DrawGradation(actualViewMode.viewPoint,actualViewMode.viewAttitude,gnd,sky,horizonColor,farZ,gndSpecular);
 		}
 		else
 		{
-			div=50;
+			groundSky->DrawCrappy(actualViewMode.viewPoint,gnd,sky,farZ,gndSpecular);
 		}
-		groundSky->DrawGroundMesh(actualViewMode.viewPoint,actualViewMode.viewAttitude,gnd,div,gndSpecular);
 	}
+
+	SimDrawGroundMesh(actualViewMode);
+}
+
+// 2016/11/26 To reduce the number of fragments, DrawGroundMesh only draws
+//            pixels whose stencil value is zero, which SimDrawMap was meant to
+//            increment.  The GLES2 context is handed no stencil bits, so the
+//            test always passes and the mesh is drawn in full.  Asking SDL for
+//            a stencil buffer to revive this cost more in bandwidth than the
+//            masking saved, so the mesh stays part of the background.
+void FsSimulation::SimDrawGroundMesh(const ActualViewMode &actualViewMode) const
+{
+	if(YSTRUE==FsSkipGroundMesh())
+	{
+		return;
+	}
+
+	auto gnd=gndColor;
+	YSBOOL gndSpecular=this->gndSpecular;
+	if(FSNIGHT==env)
+	{
+		gnd.SetDoubleRGB(gnd.Rd()*0.1,gnd.Gd()*0.1,gnd.Bd()*0.1);
+		gndSpecular=YSFALSE;
+	}
+
+	int div;
+	auto y=actualViewMode.viewPoint.y();
+	if(y>2700.0)
+	{
+		div=4050;
+	}
+	else if(y>900.0)
+	{
+		div=1350;
+	}
+	else if(y>300.0)
+	{
+		div=450;
+	}
+	else if(y>100.0)
+	{
+		div=150;
+	}
+	else
+	{
+		div=50;
+	}
+	groundSky->DrawGroundMesh(actualViewMode.viewPoint,actualViewMode.viewAttitude,gnd,div,gndSpecular);
 }
 
 void FsSimulation::SimDrawMap(const ActualViewMode &actualViewMode,const FsProjection &proj,const double &elvMin,const double &elvMax) const
@@ -7093,6 +7161,11 @@ void FsSimulation::SimDrawMap(const ActualViewMode &actualViewMode,const FsProje
 		drawPset=YSTRUE;
 	}
 
+	if(YSTRUE==FsSkipMap())
+	{
+		return;
+	}
+
 	YsScenery::numSceneryDrawn=0;
 	field.CacheMapDrawingOrder();
 	field.DrawMapVisual
@@ -7108,6 +7181,11 @@ void FsSimulation::SimDrawMap(const ActualViewMode &actualViewMode,const FsProje
 
 void FsSimulation::SimDrawAirplane(const ActualViewMode &actualViewMode,const FsProjection &proj,unsigned int drawFlag) const
 {
+	if(YSTRUE==FsSkipAirplaneObject())
+	{
+		return;
+	}
+
 	auto &viewPoint=actualViewMode.viewPoint;
 	auto &viewMat=actualViewMode.viewMat;
 
@@ -7196,6 +7274,11 @@ void FsSimulation::SimDrawAirplane(const ActualViewMode &actualViewMode,const Fs
 
 void FsSimulation::SimDrawGround(const ActualViewMode &actualViewMode,const FsProjection &proj,unsigned int drawFlag) const
 {
+	if(YSTRUE==FsSkipGroundObject())
+	{
+		return;
+	}
+
 	auto &viewPoint=actualViewMode.viewPoint;
 	auto &viewMat=actualViewMode.viewMat;
 
@@ -7290,9 +7373,12 @@ void FsSimulation::SimDrawAirplaneVaporSmoke(void) const
 
 void FsSimulation::SimDrawField(const ActualViewMode &actualViewMode,const class FsProjection &proj) const
 {
-	field.DrawVisual(actualViewMode.viewPoint,actualViewMode.viewAttitude,proj.GetMatrix(),YSFALSE); // forShadowMap=YSFALSE
+	if(YSTRUE!=FsSkipFieldObject())
+	{
+		field.DrawVisual(actualViewMode.viewPoint,actualViewMode.viewAttitude,proj.GetMatrix(),YSFALSE); // forShadowMap=YSFALSE
+	}
 
-	if(cfgPtr->drawCloud==YSTRUE && env!=FSNIGHT)
+	if(cfgPtr->drawCloud==YSTRUE && env!=FSNIGHT && YSTRUE!=FsSkipCloudObject())
 	{
 		cloud->Draw();
 	}
